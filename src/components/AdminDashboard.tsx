@@ -58,7 +58,6 @@ export default function AdminDashboard({ onBack }: { onBack: () => void }) {
   };
 
   const deleteUser = async (userId: string) => {
-    // ... rest unchanged
     if (!confirm('Are you sure you want to delete this user?')) return;
     try {
       const res = await fetch(`/api/admin/users/${userId}`, {
@@ -68,7 +67,7 @@ export default function AdminDashboard({ onBack }: { onBack: () => void }) {
       if (!res.ok) throw new Error('Failed to delete user');
       setUsers(users.filter(u => u.id !== userId));
     } catch (error) {
-      alert('Failed to delete user');
+      console.error('Delete error:', error);
     }
   };
 

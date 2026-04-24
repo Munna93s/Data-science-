@@ -60,7 +60,7 @@ async function startServer() {
       }
 
       const hashedPassword = await bcrypt.hash(password, 10);
-      const role = (email === 'munna93s@gmail.com') ? 'admin' : 'user'; // Dev override
+      const role = (email.toLowerCase() === 'munna93s@gmail.com') ? 'admin' : 'user'; // Dev override
       const userData = {
         email,
         password: hashedPassword,
@@ -185,7 +185,11 @@ async function startServer() {
   app.post("/api/analyze", authenticateToken, async (req: any, res) => {
     try {
       const { messages, context } = req.body;
-      const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
+      }
+      const genAI = new GoogleGenAI({ apiKey });
 
       const systemInstruction = `
         You are DataMind AI, a world-class senior data scientist and business intelligence consultant.

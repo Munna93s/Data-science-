@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useDataStore } from '../store/useDataStore';
 import { 
   BarChart as ReBarChart, Bar, LineChart as ReLineChart, Line, 
@@ -21,11 +21,12 @@ export default function Visualization() {
 
   const data = activeSheetName ? sheets[activeSheetName] : [];
 
-  // Initialize axes if not set
-  if (columns.length >= 2 && (!xAxis || !yAxis)) {
-    if (!xAxis) setXAxis(columns[0]);
-    if (!yAxis) setYAxis(columns[1]);
-  }
+  useEffect(() => {
+    if (columns.length >= 2) {
+      if (!xAxis || !columns.includes(xAxis)) setXAxis(columns[0]);
+      if (!yAxis || !columns.includes(yAxis)) setYAxis(columns[1]);
+    }
+  }, [columns]);
 
   if (!data || data.length === 0) return null;
 

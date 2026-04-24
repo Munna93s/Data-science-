@@ -97,17 +97,25 @@ export default function SQLEngine() {
               <table className="w-full text-xs text-left border-collapse">
                 <thead className="bg-slate-900 border-b border-border-subtle">
                   <tr>
-                    {Object.keys(result[0]).map(k => (
-                      <th key={k} className="px-4 py-2 font-mono text-slate-500 uppercase">{k}</th>
-                    ))}
+                    {typeof result[0] === 'object' && result[0] !== null ? (
+                      Object.keys(result[0]).map(k => (
+                        <th key={k} className="px-4 py-2 font-mono text-slate-500 uppercase">{k}</th>
+                      ))
+                    ) : (
+                      <th className="px-4 py-2 font-mono text-slate-500 uppercase">Result</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
                   {result.map((row, i) => (
                     <tr key={i} className="border-b border-border-subtle/30 last:border-0 hover:bg-slate-800/50 transition-colors">
-                      {Object.values(row).map((v: any, j) => (
-                        <td key={j} className="px-4 py-2 text-slate-300 font-mono italic">{String(v)}</td>
-                      ))}
+                      {typeof row === 'object' && row !== null ? (
+                        Object.values(row).map((v: any, j) => (
+                          <td key={j} className="px-4 py-2 text-slate-300 font-mono italic">{String(v)}</td>
+                        ))
+                      ) : (
+                        <td className="px-4 py-2 text-slate-300 font-mono italic">{String(row)}</td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
