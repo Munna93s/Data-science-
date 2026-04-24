@@ -16,17 +16,13 @@ const firebaseConfigPath = path.join(__dirname, 'firebase-applet-config.json');
 const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf-8'));
 
 // Initialize Firebase Admin
-let firebaseApp;
 if (!admin.apps.length) {
-  firebaseApp = admin.initializeApp({
-    credential: admin.credential.applicationDefault(), // This works in AI Studio Cloud Run env
+  admin.initializeApp({
     projectId: firebaseConfig.projectId
   });
-} else {
-  firebaseApp = admin.apps[0];
 }
 
-const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+const db = getFirestore(admin.apps[0], firebaseConfig.firestoreDatabaseId);
 const JWT_SECRET = process.env.JWT_SECRET || 'datamind-secret-key-2024';
 
 async function startServer() {
@@ -52,7 +48,9 @@ async function startServer() {
   app.post("/api/auth/signup", async (req, res) => {
     try {
       const { email, password, name } = req.body;
-      const userRef = db.collection('users').doc(email);
+      if (!email || typeof email !== 'string') return res.status(400).json({ error: "Email is required" });
+      
+      const userRef = db.collection('users').doc(email.toLowerCase());
       const doc = await userRef.get();
 
       if (doc.exists) {
@@ -80,7 +78,9 @@ async function startServer() {
   app.post("/api/auth/login", async (req, res) => {
     try {
       const { email, password } = req.body;
-      const userRef = db.collection('users').doc(email);
+      if (!email || typeof email !== 'string') return res.status(400).json({ error: "Email is required" });
+
+      const userRef = db.collection('users').doc(email.toLowerCase());
       const doc = await userRef.get();
 
       if (!doc.exists) {
@@ -96,13 +96,14 @@ async function startServer() {
       const token = jwt.sign({ email, role: user.role }, JWT_SECRET);
       res.json({ token, user: { email, name: user.displayName, role: user.role } });
     } catch (err: any) {
+      console.error(`Login error for ${req.body.email}:`, err);
       res.status(500).json({ error: err.message });
     }
   });
 
   app.get("/api/auth/me", authenticateToken, async (req: any, res) => {
     try {
-      const userDoc = await db.collection('users').doc(req.user.email).get();
+      const userDoc = await db.collection('users').doc(req.user.email.toLowerCase()).get();
       if (!userDoc.exists) return res.status(404).json({ error: "User not found" });
       const userData = userDoc.data()!;
       res.json({ 
