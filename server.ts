@@ -84,20 +84,25 @@ async function startServer() {
       
       // Ensure user exists in our local DB metadata
       let localUser: any = db.prepare('SELECT * FROM users WHERE email = ?').get(user.email);
+      const ADMIN_EMAILS = ['munna93s@gmail.com', 'kolly93m@gmail.com'];
+      const correctRole = ADMIN_EMAILS.includes(user.email) ? 'admin' : 'user';
+
       if (!localUser) {
-        const ADMIN_EMAILS = ['munna93s@gmail.com', 'kolly93m@gmail.com'];
-        const role = ADMIN_EMAILS.includes(user.email) ? 'admin' : 'user';
         db.prepare('INSERT INTO users (email, displayName, role) VALUES (?, ?, ?)').run(
-          user.email, user.name, role
+          user.email, user.name, correctRole
         );
-        localUser = { email: user.email, role, subscription: 'free' };
+        localUser = { email: user.email, role: correctRole, subscription: 'free' };
+      } else if (localUser.role !== correctRole) {
+        // Force update role if they are in the admin list
+        db.prepare('UPDATE users SET role = ? WHERE email = ?').run(correctRole, user.email);
+        localUser.role = correctRole;
       }
 
       req.user = { email: user.email, role: localUser.role, subscription: localUser.subscription };
       next();
     } catch (err) {
-      console.error('Appwrite Verification Error:', err);
-      return res.sendStatus(403);
+      console.error('Appwrite Verification Error details:', err);
+      return res.status(403).json({ error: "Authentication failed", details: String(err) });
     }
   };
 
@@ -200,35 +205,38 @@ async function startServer() {
       const genAI = new GoogleGenerativeAI(apiKey);
 
       const systemInstruction = `
-        You are DataMind AI, a world-class senior data scientist and business intelligence consultant.
+        You are DataMind AI, a world-class senior Data Scientist, SQL Expert, and Business Intelligence consultant.
         Context: ${JSON.stringify(context)}
         
-        GOAL: Provide high-value insights and take DIRECT actions to help the user.
+        GOAL: Provide high-value, pro-level data science insights. Act as if you are running Python, SQL, or Excel for the user.
         
-        DATA ACTIONS:
-        If you want to suggest or change a visualization or SQL query, include a JSON block in your response like this:
+        DATA SCIENCE ACTIONS:
+        If you want to suggest or change a visualization, or perform a data miracle (like filtering, grouping, or complex SQL-style queries), ALWAYS include a JSON block in your response.
+        
         \`\`\`json
         {
           "action": "UPDATE_VISUALIZATION",
-          "chartType": "bar" | "line" | "pie",
+          "chartType": "bar" | "line" | "pie" | "scatter" | "area",
           "xAxis": "column_name",
-          "yAxis": "column_name"
+          "yAxis": "column_name",
+          "title": "Clear description of the data science insight"
         }
         \`\`\`
         OR
         \`\`\`json
         {
           "action": "UPDATE_SQL",
-          "query": "SELECT ... FROM data ..."
+          "query": "SELECT ... FROM data ...",
+          "explanation": "What this SQL transformation achieves"
         }
         \`\`\`
         
         INSTRUCTIONS:
-        1. Identify key trends and patterns.
-        2. Detect anomalies or outliers.
-        3. Respond in the user's language (Hindi/English/Hinglish).
-        4. Format using professional Markdown.
-        5. When asked to "show me", "plot", "graph", or "query", ALWAYS include the corresponding JSON action block.
+        1. Think like a Data Scientist: Clean, analyze, visualize, and conclude.
+        2. Always summarize trends, outliers, and statistical distributions.
+        3. Respond in professional Markdown including charts/tables when relevant.
+        4. When the user gives a prompt, handle the "No Coding" part by providing the underlying SQL logic or visualization settings via the JSON actions.
+        5. Use a mix of Hindi/English (Hinglish) if the user's tone is informal, otherwise maintain professional English.
       `;
 
       const model = genAI.getGenerativeModel({

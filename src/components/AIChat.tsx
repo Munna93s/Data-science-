@@ -96,14 +96,14 @@ export default function AIChat() {
       // Update usage count in store
       useAuthStore.getState().verifySession();
 
-      // PARSE ACTIONS
+      // PARSE DATA SCIENCE ACTIONS
       try {
         const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/);
         if (jsonMatch) {
           const actionData = JSON.parse(jsonMatch[1]);
           if (actionData.action === 'UPDATE_VISUALIZATION') {
             setVizSettings({
-              chartType: actionData.chartType,
+              chartType: actionData.chartType as any,
               xAxis: actionData.xAxis,
               yAxis: actionData.yAxis
             });
@@ -193,25 +193,28 @@ export default function AIChat() {
         <div ref={scrollRef} />
       </div>
 
-      <div className="p-4 bg-slate-900/50 border-t border-border-subtle">
-        <div className="relative">
+      <div className="p-4 bg-slate-900 border-t border-border-subtle shadow-2xl">
+        <div className="relative group">
           <input 
             type="text" 
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            placeholder="Ask AI anything about your data..."
-            className="w-full bg-slate-800 border border-border-subtle rounded-xl py-3 pl-4 pr-12 text-sm focus:ring-2 focus:ring-brand focus:border-transparent outline-none transition-all"
+            placeholder="Ask DataMind to analyze, filter (SQL), or visualize like an expert..."
+            className="w-full bg-slate-800/80 border border-border-subtle rounded-2xl py-4 pl-5 pr-14 text-sm focus:ring-2 focus:ring-brand focus:border-transparent outline-none transition-all placeholder:text-slate-500 backdrop-blur-sm"
           />
           <button 
             onClick={handleSend}
             disabled={!input.trim() || isTyping}
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-brand text-white rounded-lg disabled:opacity-50 disabled:grayscale transition-all hover:scale-105 active:scale-95"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 p-2.5 bg-brand text-white rounded-xl disabled:opacity-50 disabled:grayscale transition-all hover:bg-brand-dark hover:scale-105 active:scale-95 shadow-lg shadow-brand/20"
             id="send-msg-btn"
           >
-            <Send className="w-4 h-4" />
+            {isTyping ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
           </button>
         </div>
+        <p className="text-[10px] text-center text-slate-500 mt-2 font-medium">
+          Professional Data Science Insights • No Coding Required
+        </p>
       </div>
     </div>
   );

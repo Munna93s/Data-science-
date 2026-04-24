@@ -28,12 +28,20 @@ export default function AdminDashboard({ onBack }: { onBack: () => void }) {
       const usersRes = await fetch('/api/admin/users', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (!usersRes.ok) {
+        const errorText = await usersRes.text();
+        throw new Error(`Users Fetch Failed: ${usersRes.status} ${errorText}`);
+      }
       const userData = await usersRes.json();
       setUsers(userData);
 
       const statsRes = await fetch('/api/admin/stats', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (!statsRes.ok) {
+        const errorText = await statsRes.text();
+        throw new Error(`Stats Fetch Failed: ${statsRes.status} ${errorText}`);
+      }
       const statsData = await statsRes.json();
       
       const proUsers = userData.filter((u: any) => u.subscription === 'pro').length;
@@ -65,7 +73,7 @@ export default function AdminDashboard({ onBack }: { onBack: () => void }) {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) throw new Error('Failed to delete user');
-      setUsers(users.filter(u => u.id !== userId));
+      setUsers(users.filter(u => u.email !== userId));
     } catch (error) {
       console.error('Delete error:', error);
     }
@@ -128,8 +136,8 @@ export default function AdminDashboard({ onBack }: { onBack: () => void }) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border-subtle">
-                    {users.map(user => (
-                      <tr key={user.id} className="hover:bg-slate-800/30 transition-colors">
+                    {users.map((user, idx) => (
+                      <tr key={user.email || idx} className="hover:bg-slate-800/30 transition-colors">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
                             <div className="w-10 h-10 bg-slate-700 rounded-full flex items-center justify-center font-bold text-slate-400">
@@ -151,7 +159,7 @@ export default function AdminDashboard({ onBack }: { onBack: () => void }) {
                         </td>
                         <td className="px-6 py-4">
                           <button 
-                            onClick={() => deleteUser(user.id)}
+                            onClick={() => deleteUser(user.email)}
                             className="p-2 text-slate-500 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
                           >
                             <Trash2 className="w-4 h-4" />
