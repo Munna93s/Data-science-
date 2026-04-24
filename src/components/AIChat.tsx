@@ -10,8 +10,6 @@ import { useAuthStore } from '../store/useAuthStore';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
 import { computeStats } from '../lib/dataUtils';
-import { db } from '../lib/firebase';
-import { collection, addDoc, serverTimestamp, query, orderBy, onSnapshot } from 'firebase/firestore';
 
 interface Message {
   role: 'user' | 'model';
@@ -26,24 +24,27 @@ export default function AIChat() {
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Load chat history from Firestore
+  // Load chat history from API
   useEffect(() => {
-    if (!activeSheetName || !user) return;
+    if (!activeSheetName || !user || !token) return;
 
-    const q = query(
-      collection(db, 'chats'), 
-      orderBy('timestamp', 'asc')
-    );
+    const fetchHistory = async () => {
+      try {
+        const res = await fetch(`/api/chats?sessionId=${encodeURIComponent(activeSheetName)}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setMessages(data);
+        }
+      } catch (err) {
+        console.error('Failed to fetch chat history');
+      }
+    };
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs
-        .filter(doc => doc.data().sessionId === activeSheetName && doc.data().userId === user.email)
-        .map(doc => doc.data() as Message);
-      if (msgs.length > 0) setMessages(msgs);
-    });
-
-    return () => unsubscribe();
-  }, [activeSheetName, user]);
+    fetchHistory();
+    // In a real app we might poll or use websockets, but for now simple fetch on sheet change
+  }, [activeSheetName, user, token]);
 
   const stats = activeSheetName ? computeStats(sheets[activeSheetName]) : null;
 
@@ -56,15 +57,6 @@ export default function AIChat() {
 
     const userMessage: Message = { role: 'user', content: input };
     setMessages(prev => [...prev, userMessage]);
-    
-    // Save user message to Firestore
-    await addDoc(collection(db, 'chats'), {
-      ...userMessage,
-      sessionId: activeSheetName,
-      userId: user.email,
-      timestamp: serverTimestamp()
-    });
-
     setInput('');
     setIsTyping(true);
 
@@ -91,15 +83,7 @@ export default function AIChat() {
       if (!res.ok) throw new Error(data.error || 'AI Analysis failed');
 
       const responseText = data.content;
-      
-      // Save model message to Firestore
-      await addDoc(collection(db, 'chats'), {
-        role: 'model',
-        content: responseText,
-        sessionId: activeSheetName,
-        userId: user.email,
-        timestamp: serverTimestamp()
-      });
+      setMessages(prev => [...prev, { role: 'model', content: responseText }]);
       
     } catch (error: any) {
       setMessages(prev => [...prev, { role: 'model', content: `Error: ${error.message || 'Failed to communicate with AI'}` }]);

@@ -218,6 +218,23 @@ async function startServer() {
       
       const text = response.text || "I couldn't generate a response.";
 
+      // Persist Chat History
+      const chatRef = db.collection('chats');
+      await chatRef.add({
+        role: 'user',
+        content: messages[messages.length - 1].content,
+        sessionId: context.datasetName,
+        userId: req.user.email,
+        timestamp: FieldValue.serverTimestamp()
+      });
+      await chatRef.add({
+        role: 'model',
+        content: text,
+        sessionId: context.datasetName,
+        userId: req.user.email,
+        timestamp: FieldValue.serverTimestamp()
+      });
+
       // Log usage
       await db.collection('usageLogs').add({
         userId: req.user.email,
@@ -228,6 +245,24 @@ async function startServer() {
       res.json({ content: text });
     } catch (err: any) {
       console.error('AI Error:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/chats", authenticateToken, async (req: any, res) => {
+    try {
+      const { sessionId } = req.query;
+      if (!sessionId) return res.status(400).json({ error: "sessionId required" });
+
+      const snap = await db.collection('chats')
+        .where('userId', '==', req.user.email)
+        .where('sessionId', '==', sessionId)
+        .orderBy('timestamp', 'asc')
+        .get();
+
+      const chats = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json(chats);
+    } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
@@ -270,8 +305,19 @@ async function startServer() {
   });
 
   // --- HEALTH CHECK ---
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", engine: "DataMind Express Core" });
+  app.get("/api/health", async (req, res) => {
+    let dbStatus = "unknown";
+    try {
+      await db.collection('users').limit(1).get();
+      dbStatus = "connected";
+    } catch (err: any) {
+      dbStatus = `error: ${err.message}`;
+    }
+    res.json({ 
+      status: "ok", 
+      engine: "DataMind Express Core",
+      database: dbStatus
+    });
   });
 
   // Vite middleware for development
