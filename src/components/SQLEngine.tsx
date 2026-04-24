@@ -3,32 +3,44 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useDataStore } from '../store/useDataStore';
 import alasql from 'alasql';
 import { Play, Terminal, AlertCircle, Copy, Check } from 'lucide-react';
 
 export default function SQLEngine() {
-  const { sheets, activeSheetName } = useDataStore();
-  const [query, setQuery] = useState('SELECT * FROM data LIMIT 10');
+  const { sheets, activeSheetName, sqlQuery, setSqlQuery } = useDataStore();
   const [result, setResult] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const runQuery = () => {
-    if (!activeSheetName) return;
+  useEffect(() => {
+    if (!sqlQuery && activeSheetName) {
+      setSqlQuery('SELECT * FROM data LIMIT 10');
+    }
+  }, [activeSheetName]);
+
+  const runQuery = (overrideQuery?: string) => {
+    const q = overrideQuery || sqlQuery;
+    if (!activeSheetName || !q) return;
     
     try {
       setError(null);
       const data = sheets[activeSheetName];
-      // AlaSQL can take a list of objects as a table named 'data'
-      const res = alasql(query, [data]) as any[];
+      const res = alasql(q, [data]) as any[];
       setResult(res);
     } catch (err: any) {
       setError(err.message || 'SQL Execution Error');
       setResult([]);
     }
   };
+
+  // Auto-run when query changes from AI
+  useEffect(() => {
+    if (sqlQuery) {
+       runQuery(sqlQuery);
+    }
+  }, [sqlQuery]);
 
   const copyResult = () => {
     navigator.clipboard.writeText(JSON.stringify(result, null, 2));
@@ -56,7 +68,7 @@ export default function SQLEngine() {
             query_editor.sql
           </div>
           <button 
-            onClick={runQuery}
+            onClick={() => runQuery()}
             className="flex items-center gap-2 px-3 py-1 bg-brand text-white rounded text-xs font-bold hover:bg-opacity-90 transition-all"
             id="run-sql-btn"
           >
@@ -66,8 +78,8 @@ export default function SQLEngine() {
         </div>
         
         <textarea 
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          value={sqlQuery}
+          onChange={(e) => setSqlQuery(e.target.value)}
           spellCheck={false}
           className="w-full h-32 bg-slate-900 p-4 text-brand font-mono text-sm outline-none resize-none placeholder:text-slate-700"
         />

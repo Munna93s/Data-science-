@@ -4,7 +4,7 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, User, Bot, Loader2, ArrowRight } from 'lucide-react';
+import { Send, Sparkles, User, Bot, Loader2, ArrowRight, ShieldAlert } from 'lucide-react';
 import { useDataStore } from '../store/useDataStore';
 import { useAuthStore } from '../store/useAuthStore';
 import ReactMarkdown from 'react-markdown';
@@ -17,7 +17,7 @@ interface Message {
 }
 
 export default function AIChat() {
-  const { sheets, activeSheetName, isLoading: dataLoading } = useDataStore();
+  const { sheets, activeSheetName, isLoading: dataLoading, setVizSettings, setSqlQuery } = useDataStore();
   const { user, token } = useAuthStore();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -43,7 +43,6 @@ export default function AIChat() {
     };
 
     fetchHistory();
-    // In a real app we might poll or use websockets, but for now simple fetch on sheet change
   }, [activeSheetName, user, token]);
 
   const stats = activeSheetName ? computeStats(sheets[activeSheetName]) : null;
@@ -80,10 +79,41 @@ export default function AIChat() {
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'AI Analysis failed');
+      if (!res.ok) {
+        if (res.status === 403 && data.limitReached) {
+          setMessages(prev => [...prev, { 
+            role: 'model', 
+            content: `### 🛡️ Limit Reached\n\n${data.error}\n\nOur Free Trial allows you to test the AI with your data up to ${user?.usageLimit} times. Please upgrade to Pro to continue.` 
+          }]);
+          return;
+        }
+        throw new Error(data.error || 'AI Analysis failed');
+      }
 
       const responseText = data.content;
       setMessages(prev => [...prev, { role: 'model', content: responseText }]);
+      
+      // Update usage count in store
+      useAuthStore.getState().verifySession();
+
+      // PARSE ACTIONS
+      try {
+        const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/);
+        if (jsonMatch) {
+          const actionData = JSON.parse(jsonMatch[1]);
+          if (actionData.action === 'UPDATE_VISUALIZATION') {
+            setVizSettings({
+              chartType: actionData.chartType,
+              xAxis: actionData.xAxis,
+              yAxis: actionData.yAxis
+            });
+          } else if (actionData.action === 'UPDATE_SQL') {
+            setSqlQuery(actionData.query);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to parse AI action', e);
+      }
       
     } catch (error: any) {
       setMessages(prev => [...prev, { role: 'model', content: `Error: ${error.message || 'Failed to communicate with AI'}` }]);

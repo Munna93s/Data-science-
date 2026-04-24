@@ -3,23 +3,21 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import Database from 'better-sqlite3';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import { Client, Account } from 'node-appwrite';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize SQLite
+// Initialize SQLite for data persistence
 const db = new Database('datamind.db');
 db.pragma('journal_mode = WAL');
 
-// Create Tables
+// Create Tables (simplified users table as auth is now via Appwrite)
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     email TEXT PRIMARY KEY,
-    password TEXT NOT NULL,
     displayName TEXT,
     role TEXT DEFAULT 'user',
     subscription TEXT DEFAULT 'free',
@@ -58,90 +56,69 @@ db.exec(`
   );
 `);
 
-const JWT_SECRET = 'standard_321eb37c6c458ecd0f211ab96ea0276e92571b174a2d685ce26a57c02021d920a44693648e0c7c0483193496b43fef8f59d93600aba498c83fe33e50f6899850d28729a844a4b0470a2705a6cdc0705f893195594bb3974777fac474c6b782b8a47794325d75659312287a21f62c979e26687652f480d76d2126afdaf08f359b';
-
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(express.json({ limit: '50mb' }));
 
+  // Appwrite Config for Server
+  const appwriteClient = new Client()
+    .setEndpoint(process.env.VITE_APPWRITE_ENDPOINT || 'https://nyc.cloud.appwrite.io/v1')
+    .setProject(process.env.VITE_APPWRITE_PROJECT_ID || '');
+
   // --- Auth Middleware ---
-  const authenticateToken = (req: any, res: any, next: any) => {
+  const authenticateToken = async (req: any, res: any, next: any) => {
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+    const token = authHeader && authHeader.split(' ')[1]; // This is the Appwrite JWT
     if (!token) return res.sendStatus(401);
 
-    jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
-      if (err) return res.sendStatus(403);
-      req.user = user;
+    try {
+      const clientWithJwt = new Client()
+        .setEndpoint(process.env.VITE_APPWRITE_ENDPOINT || 'https://nyc.cloud.appwrite.io/v1')
+        .setProject(process.env.VITE_APPWRITE_PROJECT_ID || '')
+        .setJWT(token);
+
+      const account = new Account(clientWithJwt);
+      const user = await account.get();
+      
+      // Ensure user exists in our local DB metadata
+      let localUser: any = db.prepare('SELECT * FROM users WHERE email = ?').get(user.email);
+      if (!localUser) {
+        const ADMIN_EMAILS = ['munna93s@gmail.com', 'kolly93m@gmail.com'];
+        const role = ADMIN_EMAILS.includes(user.email) ? 'admin' : 'user';
+        db.prepare('INSERT INTO users (email, displayName, role) VALUES (?, ?, ?)').run(
+          user.email, user.name, role
+        );
+        localUser = { email: user.email, role, subscription: 'free' };
+      }
+
+      req.user = { email: user.email, role: localUser.role, subscription: localUser.subscription };
       next();
-    });
+    } catch (err) {
+      console.error('Appwrite Verification Error:', err);
+      return res.sendStatus(403);
+    }
   };
 
-  // --- AUTH ROUTES ---
-  app.post("/api/auth/signup", async (req, res) => {
-    try {
-      const { email, password, name } = req.body;
-      if (!email || typeof email !== 'string') return res.status(400).json({ error: "Email is required" });
-      
-      const emailLower = email.toLowerCase();
-      const existingUser = db.prepare('SELECT email FROM users WHERE email = ?').get(emailLower);
+  const FREE_LIMIT = 2;
 
-      if (existingUser) {
-        return res.status(400).json({ error: "User already exists" });
-      }
-
-      const hashedPassword = await bcrypt.hash(password, 10);
-      const role = (emailLower === 'munna93s@gmail.com') ? 'admin' : 'user';
-
-      db.prepare('INSERT INTO users (email, password, displayName, role) VALUES (?, ?, ?, ?)').run(
-        emailLower, hashedPassword, name, role
-      );
-
-      const token = jwt.sign({ email: emailLower, role: role }, JWT_SECRET);
-      res.status(201).json({ token, user: { email: emailLower, name, role: role } });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/auth/login", async (req, res) => {
-    try {
-      const { email, password } = req.body;
-      if (!email || typeof email !== 'string') return res.status(400).json({ error: "Email is required" });
-
-      const emailLower = email.toLowerCase();
-      const user: any = db.prepare('SELECT * FROM users WHERE email = ?').get(emailLower);
-
-      if (!user) {
-        return res.status(400).json({ error: "User not found" });
-      }
-
-      const validPassword = await bcrypt.compare(password, user.password);
-      if (!validPassword) {
-        return res.status(400).json({ error: "Invalid password" });
-      }
-
-      const token = jwt.sign({ email: emailLower, role: user.role }, JWT_SECRET);
-      res.json({ token, user: { email: emailLower, name: user.displayName, role: user.role } });
-    } catch (err: any) {
-      console.error(`Login error for ${req.body.email}:`, err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
+  // --- AUTH ROUTES (Cleaned up as Appwrite handles primary auth) ---
   app.get("/api/auth/me", authenticateToken, (req: any, res) => {
     try {
       const userData: any = db.prepare('SELECT email, displayName, role, subscription, expiresAt FROM users WHERE email = ?').get(req.user.email);
       if (!userData) return res.status(404).json({ error: "User not found" });
       
+      const usage: any = db.prepare('SELECT COUNT(*) as count FROM usageLogs WHERE userId = ? AND action IN ("ai_analysis", "upload")').get(req.user.email);
+
       res.json({ 
         email: userData.email, 
         name: userData.displayName, 
         role: userData.role,
         subscription: userData.subscription || 'free',
-        expiresAt: userData.expiresAt || null
+        expiresAt: userData.expiresAt || null,
+        usageCount: usage.count,
+        usageLimit: FREE_LIMIT
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -172,6 +149,14 @@ async function startServer() {
     try {
       const { datasetName, rowCount } = req.body;
       
+      // Check limits for free users
+      if (req.user.subscription === 'free' && req.user.role !== 'admin') {
+        const usage: any = db.prepare('SELECT COUNT(*) as count FROM usageLogs WHERE userId = ? AND action IN ("ai_analysis", "upload")').get(req.user.email);
+        if (usage.count >= FREE_LIMIT) {
+          return res.status(403).json({ error: "Free trial limit reached. Please upgrade to Pro to continue uploading datasets.", limitReached: true });
+        }
+      }
+
       const info = db.prepare('INSERT INTO sessions (userId, datasetName, rowCount) VALUES (?, ?, ?)').run(
         req.user.email, datasetName, rowCount
       );
@@ -199,40 +184,53 @@ async function startServer() {
   app.post("/api/analyze", authenticateToken, async (req: any, res) => {
     try {
       const { messages, context } = req.body;
+
+      // Check limits for free users
+      if (req.user.subscription === 'free' && req.user.role !== 'admin') {
+        const usage: any = db.prepare('SELECT COUNT(*) as count FROM usageLogs WHERE userId = ? AND action IN ("ai_analysis", "upload")').get(req.user.email);
+        if (usage.count >= FREE_LIMIT) {
+          return res.status(403).json({ error: "Free trial limit reached. Please upgrade to Pro for unlimited AI analysis.", limitReached: true });
+        }
+      }
+
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
         return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
       }
-      const genAI = new GoogleGenAI({ apiKey });
+      const genAI = new GoogleGenerativeAI(apiKey);
 
       const systemInstruction = `
         You are DataMind AI, a world-class senior data scientist and business intelligence consultant.
         Context: ${JSON.stringify(context)}
         
-        GOAL: Provide high-value insights, not just summaries.
+        GOAL: Provide high-value insights and take DIRECT actions to help the user.
+        
+        DATA ACTIONS:
+        If you want to suggest or change a visualization or SQL query, include a JSON block in your response like this:
+        \`\`\`json
+        {
+          "action": "UPDATE_VISUALIZATION",
+          "chartType": "bar" | "line" | "pie",
+          "xAxis": "column_name",
+          "yAxis": "column_name"
+        }
+        \`\`\`
+        OR
+        \`\`\`json
+        {
+          "action": "UPDATE_SQL",
+          "query": "SELECT ... FROM data ..."
+        }
+        \`\`\`
+        
         INSTRUCTIONS:
         1. Identify key trends and patterns.
-        2. Detect anomalies or outliers in the data.
-        3. Suggest actionable business steps based on findings.
-        4. Use statistical terms (correlation, mean, variance) where appropriate.
-        5. Respond in the user's language (Hindi/English/Hinglish).
-        6. Format using professional Markdown.
-        
-        If the user is a PRO member, provide deeper statistical analysis including potential forecasts.
+        2. Detect anomalies or outliers.
+        3. Respond in the user's language (Hindi/English/Hinglish).
+        4. Format using professional Markdown.
+        5. When asked to "show me", "plot", "graph", or "query", ALWAYS include the corresponding JSON action block.
       `;
 
-      const response = await genAI.getGenerativeModel({ model: "gemini-1.5-flash" }).generateContent({
-        contents: messages.map((m: any) => ({
-          role: m.role === 'user' ? 'user' : 'model',
-          parts: [{ text: m.content }]
-        })),
-        generationConfig: {
-          // No direct systemInstruction parameter here in some SDK versions, check if we should use specialized constructor
-        },
-        // Note: Using simpler call as fallback or standard model usage
-      });
-      
-      // Re-initialize with system instruction if possible
       const model = genAI.getGenerativeModel({
         model: "gemini-1.5-flash",
         systemInstruction: systemInstruction,

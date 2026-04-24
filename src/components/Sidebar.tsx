@@ -31,11 +31,24 @@ export default function Sidebar() {
     setLoading(true);
     try {
       const data = await parseFile(file);
+      
+      // We check limit by attempting to save the session first (it's small data)
+      // or we can just try to save and catch the 403
+      
       setDataset(file.name, data);
 
       if (user) {
         const rowCount = Object.values(data)[0]?.length || 0;
-        await saveSession(file.name, rowCount);
+        try {
+          await saveSession(file.name, rowCount);
+        } catch (err: any) {
+          if (err.message.includes('limit reached')) {
+            setError('Free trial limit reached. Please upgrade to Pro to upload more datasets.');
+            // Even if we show the data in-browser, we inform them it's not saved/synced
+          } else {
+            throw err;
+          }
+        }
       }
     } catch (err: any) {
       setError(err.message || 'Failed to parse file');
@@ -126,9 +139,16 @@ export default function Sidebar() {
       <section className="mt-auto pt-6 border-t border-border-subtle space-y-4">
         {user?.subscription !== 'pro' ? (
           <div className="p-4 bg-brand/10 border border-brand/20 rounded-xl space-y-3">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-brand" />
-              <span className="text-xs font-black text-brand uppercase tracking-widest">Upgrade to Pro</span>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-brand" />
+                <span className="text-xs font-black text-brand uppercase tracking-widest">Upgrade to Pro</span>
+              </div>
+              {user?.usageLimit && (
+                <span className="text-[10px] font-bold px-1.5 py-0.5 bg-brand/20 rounded text-brand">
+                  {Math.max(0, user.usageLimit - (user.usageCount || 0))}/{user.usageLimit} Free
+                </span>
+              )}
             </div>
             <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
               Get advanced statistical models and deeper AI analysis for ₹499/mo.

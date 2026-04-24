@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { account } from '../lib/appwrite';
+import { ID } from 'appwrite';
 
 interface User {
   email: string;
@@ -6,6 +8,8 @@ interface User {
   role: string;
   subscription?: 'free' | 'pro';
   expiresAt?: any;
+  usageCount?: number;
+  usageLimit?: number;
 }
 
 interface AuthState {
@@ -15,8 +19,9 @@ interface AuthState {
   error: string | null;
   sessions: any[];
   
-  setAuth: (user: User, token: string) => void;
-  logout: () => void;
+  login: (email: string, pass: string) => Promise<void>;
+  signup: (email: string, pass: string, name: string) => Promise<void>;
+  logout: () => Promise<void>;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   verifySession: () => Promise<void>;
@@ -32,12 +37,48 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   error: null,
   sessions: [],
 
-  setAuth: (user, token) => {
-    localStorage.setItem('datamind_token', token);
-    set({ user, token, error: null, isLoading: false });
+  login: async (email, pass) => {
+    try {
+      set({ isLoading: true, error: null });
+      await account.createEmailPasswordSession(email, pass);
+      const userRes = await account.get();
+      const jwtRes = await account.createJWT();
+      
+      const token = jwtRes.jwt;
+      localStorage.setItem('datamind_token', token);
+      
+      // Determine role (custom logic if needed, or query backend)
+      const ADMIN_EMAILS = ['munna93s@gmail.com', 'kolly93m@gmail.com'];
+      const role = ADMIN_EMAILS.includes(userRes.email) ? 'admin' : 'user';
+      
+      set({ 
+        user: { email: userRes.email, name: userRes.name, role }, 
+        token, 
+        isLoading: false 
+      });
+    } catch (err: any) {
+      set({ error: err.message, isLoading: false });
+      throw err;
+    }
   },
 
-  logout: () => {
+  signup: async (email, pass, name) => {
+    try {
+      set({ isLoading: true, error: null });
+      await account.create(ID.unique(), email, pass, name);
+      await get().login(email, pass);
+    } catch (err: any) {
+      set({ error: err.message, isLoading: false });
+      throw err;
+    }
+  },
+
+  logout: async () => {
+    try {
+      await account.deleteSession('current');
+    } catch (e) {
+      console.warn('Silent session delete fail');
+    }
     localStorage.removeItem('datamind_token');
     set({ user: null, token: null, isLoading: false, sessions: [] });
   },
@@ -46,25 +87,33 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   setError: (error) => set({ error }),
 
   verifySession: async () => {
-    const { token } = get();
-    if (!token) {
-      set({ isLoading: false });
-      return;
-    }
-
     try {
+      const userRes = await account.get();
+      const jwtRes = await account.createJWT();
+      const token = jwtRes.jwt;
+      localStorage.setItem('datamind_token', token);
+      
+      // Fetch detailed user profile from our own backend if needed (e.g. for subscription status)
       const res = await fetch('/api/auth/me', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      
       if (res.ok) {
-        const user = await res.json();
-        set({ user, isLoading: false });
+        const userData = await res.json();
+        set({ user: userData, token, isLoading: false });
       } else {
-        localStorage.removeItem('datamind_token');
-        set({ user: null, token: null, isLoading: false });
+        // Fallback to basic appwrite info
+        const ADMIN_EMAILS = ['munna93s@gmail.com', 'kolly93m@gmail.com'];
+        const role = ADMIN_EMAILS.includes(userRes.email) ? 'admin' : 'user';
+        set({ 
+          user: { email: userRes.email, name: userRes.name, role }, 
+          token, 
+          isLoading: false 
+        });
       }
     } catch (err) {
-      set({ isLoading: false });
+      localStorage.removeItem('datamind_token');
+      set({ user: null, token: null, isLoading: false });
     }
   },
 
@@ -118,9 +167,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
       if (res.ok) {
         get().fetchSessions();
+        // Refresh me to get updated usage counts
+        get().verifySession();
+      } else {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Failed to save session');
       }
-    } catch (err) {
-      console.error('Failed to save session');
+    } catch (err: any) {
+      console.error('Failed to save session', err);
+      throw err;
     }
   }
 }));

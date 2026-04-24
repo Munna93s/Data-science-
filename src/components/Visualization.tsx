@@ -14,19 +14,9 @@ import { BarChart, LineChart, PieChart as PieIcon, Settings2 } from 'lucide-reac
 const COLORS = ['#14B8A6', '#3B82F6', '#8B5CF6', '#EC4899', '#F59E0B', '#10B981'];
 
 export default function Visualization() {
-  const { sheets, activeSheetName, columns } = useDataStore();
-  const [chartType, setChartType] = useState<'bar' | 'line' | 'pie'>('bar');
-  const [xAxis, setXAxis] = useState<string>('');
-  const [yAxis, setYAxis] = useState<string>('');
+  const { sheets, activeSheetName, columns, chartType, xAxis, yAxis, setVizSettings } = useDataStore();
 
   const data = activeSheetName ? sheets[activeSheetName] : [];
-
-  useEffect(() => {
-    if (columns.length >= 2) {
-      if (!xAxis || !columns.includes(xAxis)) setXAxis(columns[0]);
-      if (!yAxis || !columns.includes(yAxis)) setYAxis(columns[1]);
-    }
-  }, [columns]);
 
   if (!data || data.length === 0) return null;
 
@@ -38,19 +28,19 @@ export default function Visualization() {
         <h2 className="text-lg font-bold">Visual Analytics</h2>
         <div className="flex bg-slate-800 rounded-lg p-1 gap-1">
           <button 
-            onClick={() => setChartType('bar')}
+            onClick={() => setVizSettings({ chartType: 'bar' })}
             className={`p-1.5 rounded ${chartType === 'bar' ? 'bg-brand text-white' : 'text-slate-400 hover:text-white'}`}
           >
             <BarChart className="w-4 h-4" />
           </button>
           <button 
-            onClick={() => setChartType('line')}
+            onClick={() => setVizSettings({ chartType: 'line' })}
             className={`p-1.5 rounded ${chartType === 'line' ? 'bg-brand text-white' : 'text-slate-400 hover:text-white'}`}
           >
             <LineChart className="w-4 h-4" />
           </button>
           <button 
-            onClick={() => setChartType('pie')}
+            onClick={() => setVizSettings({ chartType: 'pie' })}
             className={`p-1.5 rounded ${chartType === 'pie' ? 'bg-brand text-white' : 'text-slate-400 hover:text-white'}`}
           >
             <PieIcon className="w-4 h-4" />
@@ -69,7 +59,7 @@ export default function Visualization() {
             <label className="text-xs text-slate-500 block mb-1">X-Axis (Category)</label>
             <select 
               value={xAxis} 
-              onChange={(e) => setXAxis(e.target.value)}
+              onChange={(e) => setVizSettings({ xAxis: e.target.value })}
               className="w-full bg-slate-800 border border-border-subtle rounded-md px-2 py-1.5 text-xs outline-none focus:border-brand"
             >
               {columns.map(c => <option key={c} value={c}>{c}</option>)}
@@ -80,7 +70,7 @@ export default function Visualization() {
             <label className="text-xs text-slate-500 block mb-1">Y-Axis (Value)</label>
             <select 
               value={yAxis} 
-              onChange={(e) => setYAxis(e.target.value)}
+              onChange={(e) => setVizSettings({ yAxis: e.target.value })}
               className="w-full bg-slate-800 border border-border-subtle rounded-md px-2 py-1.5 text-xs outline-none focus:border-brand"
             >
               {columns.map(c => <option key={c} value={c}>{c}</option>)}

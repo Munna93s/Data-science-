@@ -8,35 +8,33 @@ import { useAuthStore } from '../store/useAuthStore';
 import { Database, Mail, Lock, User, ArrowRight, Loader2, AlertCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 
+import { isConfigured } from '../lib/appwrite';
+
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const { login, signup, setError, error } = useAuthStore();
   const [loading, setLoading] = useState(false);
-  const { setAuth, setError, error } = useAuthStore();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isConfigured) {
+      setError('Appwrite is not configured. Please add VITE_APPWRITE_PROJECT_ID in Secrets.');
+      return;
+    }
     setLoading(true);
     setError(null);
 
-    const endpoint = isLogin ? '/api/auth/login' : '/api/auth/signup';
-    const body = isLogin ? { email, password } : { email, password, name };
-
     try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Authentication failed');
-      
-      setAuth(data.user, data.token);
+      if (isLogin) {
+        await login(email, password);
+      } else {
+        await signup(email, password, name);
+      }
     } catch (err: any) {
-      setError(err.message);
+      // Error is handled in the store but we catch it here to stop loading
     } finally {
       setLoading(false);
     }

@@ -155,7 +155,7 @@ export default function App() {
               <h2 className="text-3xl font-bold mb-4 tracking-tight">Unlock the power of your data.</h2>
               <p className="text-slate-400 mb-8 leading-relaxed">
                 Upload your CSV or Excel files to get instant insights, professional statistics, and AI-powered analysis. 
-                DataMind AI processes everything in your browser for maximum privacy.
+                <span className="text-brand font-bold"> Start for free with 2 analysis units.</span>
               </p>
               <div className="flex gap-4">
                 <div className="px-6 py-4 bg-surface-lighter border border-border-subtle rounded-2xl flex flex-col items-center gap-2 w-40">
