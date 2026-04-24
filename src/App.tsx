@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import DataPreview from './components/DataPreview';
@@ -20,9 +21,10 @@ import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
   const { user, isLoading: authLoading, verifySession } = useAuthStore();
-  const [showAdmin, setShowAdmin] = useState(false);
   const { datasetName, isLoading, error } = useDataStore();
   const [activeTab, setActiveTab] = useState<'preview' | 'stats' | 'ai' | 'charts' | 'sql'>('preview');
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const isAdmin = user?.role === 'admin';
 
@@ -92,10 +94,6 @@ export default function App() {
     return <AuthPage />;
   }
 
-  if (showAdmin && isAdmin) {
-    return <AdminDashboard onBack={() => setShowAdmin(false)} />;
-  }
-
   const tabs = [
     { id: 'preview', label: 'Table View', icon: TableIcon },
     { id: 'stats', label: 'Stats', icon: Activity },
@@ -105,23 +103,37 @@ export default function App() {
   ] as const;
 
   return (
-    <div className="min-h-screen bg-surface-dark font-sans selection:bg-brand/30">
-      <Navbar />
-      
-      <div className="flex">
-        <Sidebar />
-        
-        <main className="flex-1 p-6 overflow-x-hidden relative">
-          {isAdmin && (
-            <button 
-              onClick={() => setShowAdmin(true)}
-              className="absolute top-6 right-6 flex items-center gap-2 px-3 py-1.5 bg-slate-800 border border-border-subtle rounded-lg text-xs font-bold hover:border-brand transition-all z-40"
-              id="admin-entry-btn"
-            >
-              <Shield className="w-3.5 h-3.5 text-brand" />
-              Admin Panel
-            </button>
-          )}
+    <Routes>
+      <Route path="/admin" element={
+        isAdmin ? (
+          <AdminDashboard onBack={() => navigate('/')} />
+        ) : (
+          <div className="h-screen flex flex-col items-center justify-center bg-slate-900 text-white">
+            <Shield className="w-16 h-16 text-red-500 mb-4" />
+            <h1 className="text-2xl font-bold">Access Denied</h1>
+            <p className="text-slate-400 mt-2">You don't have administrative privileges.</p>
+            <button onClick={() => navigate('/')} className="mt-6 px-6 py-2 bg-brand rounded-lg font-bold">Return Home</button>
+          </div>
+        )
+      } />
+      <Route path="/*" element={
+        <div className="min-h-screen bg-surface-dark font-sans selection:bg-brand/30">
+          <Navbar />
+          
+          <div className="flex">
+            <Sidebar />
+            
+            <main className="flex-1 p-6 overflow-x-hidden relative">
+              {isAdmin && (
+                <button 
+                  onClick={() => navigate('/admin')}
+                  className="absolute top-6 right-6 flex items-center gap-2 px-3 py-1.5 bg-slate-800 border border-border-subtle rounded-lg text-xs font-bold hover:border-brand transition-all z-40"
+                  id="admin-entry-btn"
+                >
+                  <Shield className="w-3.5 h-3.5 text-brand" />
+                  Admin Panel
+                </button>
+              )}
 
 
           {error && (
@@ -196,5 +208,7 @@ export default function App() {
         </main>
       </div>
     </div>
+      } />
+    </Routes>
   );
 }
