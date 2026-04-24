@@ -1,0 +1,55 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "System user",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "createdAt"]
+    },
+    "Session": {
+      "title": "Analysis Session",
+      "description": "A data analysis session",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "lastModifiedAt": { "type": "string", "format": "date-time" },
+        "dataPreview": { "type": "string", "description": "JSON string of sample rows" },
+        "schema": { "type": "string", "description": "JSON string of column types" }
+      },
+      "required": ["userId", "name", "createdAt"]
+    },
+    "Analysis": {
+      "title": "AI Analysis",
+      "description": "Conversation history with AI",
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "model"] },
+        "content": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sessionId", "role", "content", "timestamp"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "sessions/{sessionId}": {
+      "schema": "Session",
+      "description": "User analysis sessions"
+    },
+    "sessions/{sessionId}/chats/{chatId}": {
+      "schema": "Analysis",
+      "description": "AI chat history for a session"
+    }
+  }
+}

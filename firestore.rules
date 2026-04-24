@@ -1,0 +1,89 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // User Rules
+    match /users/{userId} {
+      function isValidUser(data) {
+        return data.email is string && data.email.size() > 0 && data.email.size() <= 256 &&
+               data.createdAt is timestamp &&
+               (data.displayName == null || (data.displayName is string && data.displayName.size() <= 100));
+      }
+
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(incoming()) && incoming().createdAt == request.time;
+      allow update: if isOwner(userId) && isValidUser(incoming()) &&
+                    incoming().email == existing().email &&
+                    incoming().createdAt == existing().createdAt;
+    }
+
+    // Session Rules
+    match /sessions/{sessionId} {
+      function isValidSession(data) {
+        return data.userId == request.auth.uid &&
+               data.name is string && data.name.size() <= 200 &&
+               data.createdAt is timestamp &&
+               data.lastModifiedAt is timestamp &&
+               (data.dataPreview == null || (data.dataPreview is string && data.dataPreview.size() <= 1048576)) &&
+               (data.schema == null || (data.schema is string && data.schema.size() <= 65536));
+      }
+
+      allow get, delete: if isSignedIn() && isOwner(existing().userId);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      allow create: if isSignedIn() && isValidId(sessionId) && 
+                    isValidSession(incoming()) && 
+                    incoming().createdAt == request.time &&
+                    incoming().lastModifiedAt == request.time;
+                    
+      allow update: if isSignedIn() && isOwner(existing().userId) &&
+                    isValidSession(incoming()) &&
+                    incoming().userId == existing().userId &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().lastModifiedAt == request.time;
+      
+      // Chats Subcollection
+      match /chats/{chatId} {
+        function isValidChat(data) {
+          return data.sessionId == sessionId &&
+                 data.role in ['user', 'model'] &&
+                 data.content is string && data.content.size() <= 100000 &&
+                 data.timestamp is timestamp;
+        }
+
+        // Access depends on parent session
+        allow read: if isSignedIn() && isOwner(get(/databases/$(database)/documents/sessions/$(sessionId)).data.userId);
+        
+        allow create: if isSignedIn() && 
+                      isOwner(get(/databases/$(database)/documents/sessions/$(sessionId)).data.userId) &&
+                      isValidChat(incoming()) &&
+                      incoming().timestamp == request.time;
+      }
+    }
+  }
+}
