@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import DataPreview from './components/DataPreview';
@@ -11,13 +11,90 @@ import StatsPanel from './components/StatsPanel';
 import AIChat from './components/AIChat';
 import Visualization from './components/Visualization';
 import SQLEngine from './components/SQLEngine';
+import AdminDashboard from './components/AdminDashboard';
+import AuthPage from './pages/AuthPage';
 import { useDataStore } from './store/useDataStore';
-import { BarChart3, MessageSquare, Database, Table as TableIcon, Activity, Loader2 } from 'lucide-react';
+import { useAuthStore } from './store/useAuthStore';
+import { BarChart3, MessageSquare, Database, Table as TableIcon, Activity, Loader2, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
+  const { user, isLoading: authLoading, verifySession } = useAuthStore();
+  const [showAdmin, setShowAdmin] = useState(false);
   const { datasetName, isLoading, error } = useDataStore();
   const [activeTab, setActiveTab] = useState<'preview' | 'stats' | 'ai' | 'charts' | 'sql'>('preview');
+
+  const isAdmin = user?.role === 'admin';
+
+  useEffect(() => {
+    verifySession();
+  }, [verifySession]);
+
+  useEffect(() => {
+    const handleExport = async () => {
+      if (!datasetName) return;
+
+      const { default: jsPDF } = await import('jspdf');
+      const { default: html2canvas } = await import('html2canvas');
+
+      const doc = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      
+      // Select the main area to capture
+      const mainArea = document.querySelector('main');
+      if (!mainArea) return;
+
+      setLoadingData(true);
+      try {
+        const canvas = await html2canvas(mainArea, {
+          backgroundColor: '#0F172A',
+          scale: 2
+        });
+        const imgData = canvas.toDataURL('image/png');
+        const imgWidth = pageWidth - 20;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+        
+        doc.setFontSize(22);
+        doc.setTextColor(20, 184, 166);
+        doc.text('DATAMIND AI: Insight Report', 10, 20);
+        
+        doc.setFontSize(10);
+        doc.setTextColor(148, 163, 184);
+        doc.text(`Dataset: ${datasetName} | Date: ${new Date().toLocaleString()}`, 10, 30);
+        
+        doc.addImage(imgData, 'PNG', 10, 40, imgWidth, imgHeight);
+        doc.save(`${datasetName}_analysis_report.pdf`);
+      } catch (err) {
+        console.error('PDF export failed', err);
+      } finally {
+        setLoadingData(false);
+      }
+    };
+
+    window.addEventListener('export-pdf', handleExport);
+    return () => window.removeEventListener('export-pdf', handleExport);
+  }, [datasetName]);
+
+  const [loadingData, setLoadingData] = useState(false);
+
+  if (authLoading || loadingData) {
+    return (
+      <div className="h-screen bg-surface-dark flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-12 h-12 text-brand animate-spin" />
+          {loadingData && <p className="text-brand font-mono text-xs animate-pulse tracking-widest text-center">GENERATING CRYPTOGRAPHIC REPORT...<br/>PREPARING PDF ELEMENTS</p>}
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthPage />;
+  }
+
+  if (showAdmin && isAdmin) {
+    return <AdminDashboard onBack={() => setShowAdmin(false)} />;
+  }
 
   const tabs = [
     { id: 'preview', label: 'Table View', icon: TableIcon },
@@ -34,15 +111,18 @@ export default function App() {
       <div className="flex">
         <Sidebar />
         
-        <main className="flex-1 p-6 overflow-x-hidden">
-          {isLoading && (
-            <div className="fixed inset-0 bg-surface-dark/80 backdrop-blur-sm z-[60] flex items-center justify-center">
-              <div className="flex flex-col items-center gap-4">
-                <Loader2 className="w-12 h-12 text-brand animate-spin" />
-                <p className="text-brand font-mono text-sm animate-pulse">PROCESSING DATASET...</p>
-              </div>
-            </div>
+        <main className="flex-1 p-6 overflow-x-hidden relative">
+          {isAdmin && (
+            <button 
+              onClick={() => setShowAdmin(true)}
+              className="absolute top-6 right-6 flex items-center gap-2 px-3 py-1.5 bg-slate-800 border border-border-subtle rounded-lg text-xs font-bold hover:border-brand transition-all z-40"
+              id="admin-entry-btn"
+            >
+              <Shield className="w-3.5 h-3.5 text-brand" />
+              Admin Panel
+            </button>
           )}
+
 
           {error && (
             <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-500 text-sm flex items-center gap-3">

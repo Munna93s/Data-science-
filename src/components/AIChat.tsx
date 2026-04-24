@@ -6,12 +6,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Sparkles, User, Bot, Loader2, ArrowRight } from 'lucide-react';
 import { useDataStore } from '../store/useDataStore';
-import { GoogleGenAI } from '@google/genai';
+import { useAuthStore } from '../store/useAuthStore';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
 import { computeStats } from '../lib/dataUtils';
-
-const GEMINI_MODEL = 'gemini-3-flash-preview';
+import { db } from '../lib/firebase';
+import { collection, addDoc, serverTimestamp, query, orderBy, onSnapshot } from 'firebase/firestore';
 
 interface Message {
   role: 'user' | 'model';
@@ -20,10 +20,30 @@ interface Message {
 
 export default function AIChat() {
   const { sheets, activeSheetName, isLoading: dataLoading } = useDataStore();
+  const { user, token } = useAuthStore();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Load chat history from Firestore
+  useEffect(() => {
+    if (!activeSheetName || !user) return;
+
+    const q = query(
+      collection(db, 'chats'), 
+      orderBy('timestamp', 'asc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const msgs = snapshot.docs
+        .filter(doc => doc.data().sessionId === activeSheetName && doc.data().userId === user.email)
+        .map(doc => doc.data() as Message);
+      if (msgs.length > 0) setMessages(msgs);
+    });
+
+    return () => unsubscribe();
+  }, [activeSheetName, user]);
 
   const stats = activeSheetName ? computeStats(sheets[activeSheetName]) : null;
 
@@ -32,55 +52,62 @@ export default function AIChat() {
   }, [messages]);
 
   const handleSend = async () => {
-    if (!input.trim() || !activeSheetName) return;
+    if (!input.trim() || !activeSheetName || !user || !token) return;
 
     const userMessage: Message = { role: 'user', content: input };
     setMessages(prev => [...prev, userMessage]);
+    
+    // Save user message to Firestore
+    await addDoc(collection(db, 'chats'), {
+      ...userMessage,
+      sessionId: activeSheetName,
+      userId: user.email,
+      timestamp: serverTimestamp()
+    });
+
     setInput('');
     setIsTyping(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY as string });
-      
-      const dataSample = sheets[activeSheetName].slice(0, 10);
-      const dataContext = `
-        Dataset: ${activeSheetName}
-        Total Rows: ${sheets[activeSheetName].length}
-        Columns & Stats: ${JSON.stringify(stats)}
-        Sample Data (first 10 rows): ${JSON.stringify(dataSample)}
-      `;
-
-      const systemPrompt = `
-        You are DataMind AI, an expert data analyst. 
-        You have access to the user's dataset context provided below.
-        Analyze the data and answer the user's questions in a clear, professional, and insight-driven manner.
-        Always use Markdown for formatting (tables, bold text, lists).
-        If the user asks for trends, outliers, or summaries, use the provided statistics.
-        Support Hindi, English, and Hinglish based on user input.
-        
-        DATA CONTEXT:
-        ${dataContext}
-      `;
-
-      const chat = ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: [
-          { role: 'user', parts: [{ text: systemPrompt }] },
-          ...messages.map(m => ({ role: m.role, parts: [{ text: m.content }] })),
-          { role: 'user', parts: [{ text: input }] }
-        ],
+      const dataSample = sheets[activeSheetName].slice(0, 30);
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          messages: [...messages, userMessage],
+          context: {
+            datasetName: activeSheetName,
+            totalRows: sheets[activeSheetName].length,
+            stats,
+            sample: dataSample
+          }
+        })
       });
 
-      const response = await chat;
-      const responseText = response.text || "I couldn't generate a response.";
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'AI Analysis failed');
+
+      const responseText = data.content;
       
-      setMessages(prev => [...prev, { role: 'model', content: responseText }]);
+      // Save model message to Firestore
+      await addDoc(collection(db, 'chats'), {
+        role: 'model',
+        content: responseText,
+        sessionId: activeSheetName,
+        userId: user.email,
+        timestamp: serverTimestamp()
+      });
+      
     } catch (error: any) {
       setMessages(prev => [...prev, { role: 'model', content: `Error: ${error.message || 'Failed to communicate with AI'}` }]);
     } finally {
       setIsTyping(false);
     }
   };
+
 
   const quickPrompts = [
     "Summarize this data",
