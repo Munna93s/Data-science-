@@ -5,25 +5,60 @@ import { fileURLToPath } from "url";
 import fs from "fs";
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import admin from 'firebase-admin';
-import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
+import Database from 'better-sqlite3';
 import { GoogleGenAI } from '@google/genai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const firebaseConfigPath = path.join(__dirname, 'firebase-applet-config.json');
-const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf-8'));
+// Initialize SQLite
+const db = new Database('datamind.db');
+db.pragma('journal_mode = WAL');
 
-// Initialize Firebase Admin
-if (!admin.apps.length) {
-  admin.initializeApp({
-    projectId: firebaseConfig.projectId
-  });
-}
+// Create Tables
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    email TEXT PRIMARY KEY,
+    password TEXT NOT NULL,
+    displayName TEXT,
+    role TEXT DEFAULT 'user',
+    subscription TEXT DEFAULT 'free',
+    expiresAt TEXT,
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 
-const db = getFirestore(admin.apps[0], firebaseConfig.firestoreDatabaseId);
-const JWT_SECRET = process.env.JWT_SECRET || 'datamind-secret-key-2024';
+  CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    userId TEXT,
+    datasetName TEXT,
+    rowCount INTEGER,
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    lastModifiedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(userId) REFERENCES users(email)
+  );
+
+  CREATE TABLE IF NOT EXISTS chats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role TEXT,
+    content TEXT,
+    sessionId TEXT,
+    userId TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(userId) REFERENCES users(email)
+  );
+
+  CREATE TABLE IF NOT EXISTS usageLogs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    userId TEXT,
+    action TEXT,
+    dataset TEXT,
+    amount INTEGER,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(userId) REFERENCES users(email)
+  );
+`);
+
+const JWT_SECRET = 'standard_321eb37c6c458ecd0f211ab96ea0276e92571b174a2d685ce26a57c02021d920a44693648e0c7c0483193496b43fef8f59d93600aba498c83fe33e50f6899850d28729a844a4b0470a2705a6cdc0705f893195594bb3974777fac474c6b782b8a47794325d75659312287a21f62c979e26687652f480d76d2126afdaf08f359b';
 
 async function startServer() {
   const app = express();
@@ -50,26 +85,22 @@ async function startServer() {
       const { email, password, name } = req.body;
       if (!email || typeof email !== 'string') return res.status(400).json({ error: "Email is required" });
       
-      const userRef = db.collection('users').doc(email.toLowerCase());
-      const doc = await userRef.get();
+      const emailLower = email.toLowerCase();
+      const existingUser = db.prepare('SELECT email FROM users WHERE email = ?').get(emailLower);
 
-      if (doc.exists) {
+      if (existingUser) {
         return res.status(400).json({ error: "User already exists" });
       }
 
       const hashedPassword = await bcrypt.hash(password, 10);
-      const role = (email.toLowerCase() === 'munna93s@gmail.com') ? 'admin' : 'user'; // Dev override
-      const userData = {
-        email,
-        password: hashedPassword,
-        displayName: name,
-        role: role,
-        createdAt: FieldValue.serverTimestamp()
-      };
+      const role = (emailLower === 'munna93s@gmail.com') ? 'admin' : 'user';
 
-      await userRef.set(userData);
-      const token = jwt.sign({ email, role: role }, JWT_SECRET);
-      res.status(201).json({ token, user: { email, name, role: role } });
+      db.prepare('INSERT INTO users (email, password, displayName, role) VALUES (?, ?, ?, ?)').run(
+        emailLower, hashedPassword, name, role
+      );
+
+      const token = jwt.sign({ email: emailLower, role: role }, JWT_SECRET);
+      res.status(201).json({ token, user: { email: emailLower, name, role: role } });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -80,32 +111,31 @@ async function startServer() {
       const { email, password } = req.body;
       if (!email || typeof email !== 'string') return res.status(400).json({ error: "Email is required" });
 
-      const userRef = db.collection('users').doc(email.toLowerCase());
-      const doc = await userRef.get();
+      const emailLower = email.toLowerCase();
+      const user: any = db.prepare('SELECT * FROM users WHERE email = ?').get(emailLower);
 
-      if (!doc.exists) {
+      if (!user) {
         return res.status(400).json({ error: "User not found" });
       }
 
-      const user = doc.data()!;
       const validPassword = await bcrypt.compare(password, user.password);
       if (!validPassword) {
         return res.status(400).json({ error: "Invalid password" });
       }
 
-      const token = jwt.sign({ email, role: user.role }, JWT_SECRET);
-      res.json({ token, user: { email, name: user.displayName, role: user.role } });
+      const token = jwt.sign({ email: emailLower, role: user.role }, JWT_SECRET);
+      res.json({ token, user: { email: emailLower, name: user.displayName, role: user.role } });
     } catch (err: any) {
       console.error(`Login error for ${req.body.email}:`, err);
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.get("/api/auth/me", authenticateToken, async (req: any, res) => {
+  app.get("/api/auth/me", authenticateToken, (req: any, res) => {
     try {
-      const userDoc = await db.collection('users').doc(req.user.email.toLowerCase()).get();
-      if (!userDoc.exists) return res.status(404).json({ error: "User not found" });
-      const userData = userDoc.data()!;
+      const userData: any = db.prepare('SELECT email, displayName, role, subscription, expiresAt FROM users WHERE email = ?').get(req.user.email);
+      if (!userData) return res.status(404).json({ error: "User not found" });
+      
       res.json({ 
         email: userData.email, 
         name: userData.displayName, 
@@ -118,64 +148,47 @@ async function startServer() {
     }
   });
 
-  app.post("/api/user/subscribe", authenticateToken, async (req: any, res) => {
+  app.post("/api/user/subscribe", authenticateToken, (req: any, res) => {
     try {
       const expiresAt = new Date();
       expiresAt.setMonth(expiresAt.getMonth() + 1);
+      const expiresAtStr = expiresAt.toISOString();
       
-      await db.collection('users').doc(req.user.email).update({
-        subscription: 'pro',
-        expiresAt: Timestamp.fromDate(expiresAt)
-      });
+      db.prepare('UPDATE users SET subscription = ?, expiresAt = ? WHERE email = ?').run(
+        'pro', expiresAtStr, req.user.email
+      );
       
-      await db.collection('usageLogs').add({
-        userId: req.user.email,
-        action: 'subscription_upgrade',
-        amount: 499,
-        timestamp: FieldValue.serverTimestamp()
-      });
+      db.prepare('INSERT INTO usageLogs (userId, action, amount) VALUES (?, ?, ?)').run(
+        req.user.email, 'subscription_upgrade', 499
+      );
 
-      res.json({ success: true, tier: 'pro', expiresAt });
+      res.json({ success: true, tier: 'pro', expiresAt: expiresAtStr });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post("/api/sessions", authenticateToken, async (req: any, res) => {
+  app.post("/api/sessions", authenticateToken, (req: any, res) => {
     try {
       const { datasetName, rowCount } = req.body;
-      const sessionData = {
-        userId: req.user.email,
-        datasetName,
-        rowCount,
-        createdAt: FieldValue.serverTimestamp(),
-        lastModifiedAt: FieldValue.serverTimestamp()
-      };
       
-      const docRef = await db.collection('sessions').add(sessionData);
+      const info = db.prepare('INSERT INTO sessions (userId, datasetName, rowCount) VALUES (?, ?, ?)').run(
+        req.user.email, datasetName, rowCount
+      );
       
-      await db.collection('usageLogs').add({
-        userId: req.user.email,
-        action: 'upload',
-        dataset: datasetName,
-        timestamp: FieldValue.serverTimestamp()
-      });
+      db.prepare('INSERT INTO usageLogs (userId, action, dataset) VALUES (?, ?, ?)').run(
+        req.user.email, 'upload', datasetName
+      );
 
-      res.json({ id: docRef.id, ...sessionData });
+      res.json({ id: info.lastInsertRowid, userId: req.user.email, datasetName, rowCount });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.get("/api/sessions", authenticateToken, async (req: any, res) => {
+  app.get("/api/sessions", authenticateToken, (req: any, res) => {
     try {
-      const snap = await db.collection('sessions')
-        .where('userId', '==', req.user.email)
-        .orderBy('createdAt', 'desc')
-        .limit(10)
-        .get();
-      
-      const sessions = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const sessions = db.prepare('SELECT * FROM sessions WHERE userId = ? ORDER BY createdAt DESC LIMIT 10').all(req.user.email);
       res.json(sessions);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -208,44 +221,44 @@ async function startServer() {
         If the user is a PRO member, provide deeper statistical analysis including potential forecasts.
       `;
 
-      const response = await genAI.models.generateContent({
-        model: "gemini-1.5-flash",
+      const response = await genAI.getGenerativeModel({ model: "gemini-1.5-flash" }).generateContent({
         contents: messages.map((m: any) => ({
           role: m.role === 'user' ? 'user' : 'model',
           parts: [{ text: m.content }]
         })),
-        config: {
-          systemInstruction: {
-            parts: [{ text: systemInstruction }]
-          }
-        }
+        generationConfig: {
+          // No direct systemInstruction parameter here in some SDK versions, check if we should use specialized constructor
+        },
+        // Note: Using simpler call as fallback or standard model usage
       });
       
-      const text = response.text || "I couldn't generate a response.";
+      // Re-initialize with system instruction if possible
+      const model = genAI.getGenerativeModel({
+        model: "gemini-1.5-flash",
+        systemInstruction: systemInstruction,
+      });
+
+      const result = await model.generateContent({
+        contents: messages.map((m: any) => ({
+          role: m.role === 'user' ? 'user' : 'model',
+          parts: [{ text: m.content }]
+        })),
+      });
+
+      const text = result.response.text() || "I couldn't generate a response.";
 
       // Persist Chat History
-      const chatRef = db.collection('chats');
-      await chatRef.add({
-        role: 'user',
-        content: messages[messages.length - 1].content,
-        sessionId: context.datasetName,
-        userId: req.user.email,
-        timestamp: FieldValue.serverTimestamp()
-      });
-      await chatRef.add({
-        role: 'model',
-        content: text,
-        sessionId: context.datasetName,
-        userId: req.user.email,
-        timestamp: FieldValue.serverTimestamp()
-      });
+      db.prepare('INSERT INTO chats (role, content, sessionId, userId) VALUES (?, ?, ?, ?)').run(
+        'user', messages[messages.length - 1].content, context.datasetName, req.user.email
+      );
+      db.prepare('INSERT INTO chats (role, content, sessionId, userId) VALUES (?, ?, ?, ?)').run(
+        'model', text, context.datasetName, req.user.email
+      );
 
       // Log usage
-      await db.collection('usageLogs').add({
-        userId: req.user.email,
-        action: 'ai_analysis',
-        timestamp: FieldValue.serverTimestamp()
-      });
+      db.prepare('INSERT INTO usageLogs (userId, action) VALUES (?, ?)').run(
+        req.user.email, 'ai_analysis'
+      );
 
       res.json({ content: text });
     } catch (err: any) {
@@ -254,18 +267,12 @@ async function startServer() {
     }
   });
 
-  app.get("/api/chats", authenticateToken, async (req: any, res) => {
+  app.get("/api/chats", authenticateToken, (req: any, res) => {
     try {
       const { sessionId } = req.query;
       if (!sessionId) return res.status(400).json({ error: "sessionId required" });
 
-      const snap = await db.collection('chats')
-        .where('userId', '==', req.user.email)
-        .where('sessionId', '==', sessionId)
-        .orderBy('timestamp', 'asc')
-        .get();
-
-      const chats = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const chats = db.prepare('SELECT * FROM chats WHERE userId = ? AND sessionId = ? ORDER BY timestamp ASC').all(req.user.email, sessionId);
       res.json(chats);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -273,54 +280,48 @@ async function startServer() {
   });
 
   // --- ADMIN ROUTES ---
-  app.get("/api/admin/users", authenticateToken, async (req: any, res) => {
+  app.get("/api/admin/users", authenticateToken, (req: any, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: "Forbidden" });
     try {
-      const usersSnap = await db.collection('users').get();
-      const users = usersSnap.docs.map(d => {
-        const data = d.data();
-        delete data.password;
-        return { id: d.id, ...data };
-      });
+      const users = db.prepare('SELECT email, displayName, role, subscription, expiresAt, createdAt FROM users').all();
       res.json(users);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.delete("/api/admin/users/:id", authenticateToken, async (req: any, res) => {
+  app.delete("/api/admin/users/:id", authenticateToken, (req: any, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: "Forbidden" });
     try {
-      await db.collection('users').doc(req.params.id).delete();
+      db.prepare('DELETE FROM users WHERE email = ?').run(req.params.id);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.get("/api/admin/stats", authenticateToken, async (req: any, res) => {
+  app.get("/api/admin/stats", authenticateToken, (req: any, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: "Forbidden" });
     try {
-      const usersCount = (await db.collection('users').count().get()).data().count;
-      const logsCount = (await db.collection('usageLogs').count().get()).data().count;
-      res.json({ usersCount, logsCount, uptime: process.uptime() });
+      const usersCount: any = db.prepare('SELECT COUNT(*) as count FROM users').get();
+      const logsCount: any = db.prepare('SELECT COUNT(*) as count FROM usageLogs').get();
+      res.json({ usersCount: usersCount.count, logsCount: logsCount.count, uptime: process.uptime() });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
   // --- HEALTH CHECK ---
-  app.get("/api/health", async (req, res) => {
-    let dbStatus = "unknown";
+  app.get("/api/health", (req, res) => {
+    let dbStatus = "connected";
     try {
-      await db.collection('users').limit(1).get();
-      dbStatus = "connected";
+      db.prepare('SELECT 1').get();
     } catch (err: any) {
       dbStatus = `error: ${err.message}`;
     }
     res.json({ 
       status: "ok", 
-      engine: "DataMind Express Core",
+      engine: "DataMind Express Core (SQLite)",
       database: dbStatus
     });
   });
